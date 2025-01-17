@@ -28,10 +28,11 @@ type Chunker struct {
 
 	rd io.Reader
 
-	buf    []byte
-	cursor int
-	offset int
-	eof    bool
+	readBuf  []byte
+	writeBuf []byte
+	cursor   int
+	offset   int
+	eof      bool
 }
 
 // Options configures the options for the Chunker.
@@ -125,32 +126,40 @@ func NewChunker(rd io.Reader, opts Options) (*Chunker, error) {
 		maskS:    (1 << smallBits) - 1,
 		maskL:    (1 << largeBits) - 1,
 		rd:       rd,
-		buf:      make([]byte, opts.BufSize),
+		readBuf:  make([]byte, opts.BufSize),
+		writeBuf: make([]byte, opts.BufSize),
 		cursor:   opts.BufSize,
 	}
 
 	return chunker, nil
 }
 
+func (c *Chunker) swapBuffers() {
+	readBuf := c.readBuf
+	c.readBuf = c.writeBuf
+	c.writeBuf = readBuf
+}
+
 func (c *Chunker) fillBuffer() error {
-	n := len(c.buf) - c.cursor
+	n := len(c.readBuf) - c.cursor
 	if n >= c.maxSize {
 		return nil
 	}
+	defer c.swapBuffers()
 
-	// Move all data after the cursor to the start of the buffer
-	copy(c.buf[:n], c.buf[c.cursor:])
+	// Move all data after the cursor to the start of the other buffer
+	copy(c.writeBuf[:n], c.readBuf[c.cursor:])
 	c.cursor = 0
 
 	if c.eof {
-		c.buf = c.buf[:n]
+		c.writeBuf = c.writeBuf[:n]
 		return nil
 	}
 
 	// Fill the rest of the buffer
-	m, err := io.ReadFull(c.rd, c.buf[n:])
+	m, err := io.ReadFull(c.rd, c.writeBuf[n:])
 	if err == io.EOF || err == io.ErrUnexpectedEOF {
-		c.buf = c.buf[:n+m]
+		c.writeBuf = c.writeBuf[:n+m]
 		c.eof = true
 	} else if err != nil {
 		return err
@@ -159,21 +168,22 @@ func (c *Chunker) fillBuffer() error {
 }
 
 // Next returns the next Chunk from the reader or io.EOF after the last chunk has been
-// read. The chunk data is invalidated when Next is called again.
+// read. The chunk data is invalidated when Next is called twice more (double buffered).
+// So it is possible to get the next chunk while processing the current one.
 func (c *Chunker) Next() (Chunk, error) {
 	if err := c.fillBuffer(); err != nil {
 		return Chunk{}, err
 	}
-	if len(c.buf) == 0 {
+	if len(c.readBuf) == 0 {
 		return Chunk{}, io.EOF
 	}
 
-	length, fp := c.nextChunk(c.buf[c.cursor:])
+	length, fp := c.nextChunk(c.readBuf[c.cursor:])
 
 	chunk := Chunk{
 		Offset:      c.offset,
 		Length:      length,
-		Data:        c.buf[c.cursor : c.cursor+length],
+		Data:        c.readBuf[c.cursor : c.cursor+length],
 		Fingerprint: fp,
 	}
 
