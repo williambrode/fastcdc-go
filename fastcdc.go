@@ -84,6 +84,14 @@ func (opts *Options) setDefaults() {
 	}
 }
 
+// GetMaxChunkChanSize gives the maximum buffer size for a channel that will be used to process chunks.  Exceeding this
+// size will cause corruption because the data being read may be written over before it is processed.
+// Creating a channel like make(chan Chunk, GetMaxChunkChanSize()) will allow you to read and process chunks simultaneously.
+// To maximize the number of chunks that can be processed simultaneously, increase the buffer size.
+func (opts *Options) GetMaxChunkChanSize() int {
+	return (opts.BufSize / opts.MaxSize) - 1
+}
+
 // Chunk stores a content-defined chunk returned by a Chunker.
 type Chunk struct {
 	// Offset is the number of bytes from the start of the reader to the beginning of
@@ -168,8 +176,7 @@ func (c *Chunker) fillBuffer() error {
 }
 
 // Next returns the next Chunk from the reader or io.EOF after the last chunk has been
-// read. The chunk data is invalidated when Next is called twice more (double buffered).
-// So it is possible to get the next chunk while processing the current one.
+// read. See func (opts *Options) GetMaxChunkChanSize() for details on how to read and process chunks simultaneously.
 func (c *Chunker) Next() (Chunk, error) {
 	if err := c.fillBuffer(); err != nil {
 		return Chunk{}, err
