@@ -153,16 +153,16 @@ func (c *Chunker) fillBuffer() error {
 	if n >= c.maxSize {
 		return nil
 	}
+	if c.eof {
+		c.readBuf = c.readBuf[c.cursor:]
+		c.cursor = 0
+		return nil
+	}
 	defer c.swapBuffers()
 
 	// Move all data after the cursor to the start of the other buffer
 	copy(c.writeBuf[:n], c.readBuf[c.cursor:])
 	c.cursor = 0
-
-	if c.eof {
-		c.writeBuf = c.writeBuf[:n]
-		return nil
-	}
 
 	// Fill the rest of the buffer
 	m, err := io.ReadFull(c.rd, c.writeBuf[n:])
